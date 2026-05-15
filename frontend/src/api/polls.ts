@@ -10,6 +10,7 @@ import type {
   PollListResponse,
   FeedParams,
   MyPollsParams,
+  PollTemplateResponse,
 } from '../types/poll';
 
 const POLLS_BASE = '/api/v1/polls';
@@ -40,6 +41,18 @@ export async function publishPoll(id: string): Promise<Poll> {
 
 export async function closePoll(id: string): Promise<Poll> {
   const response = await apiClient.post<Poll>(`${POLLS_BASE}/${id}/close`);
+  return response.data;
+}
+
+export async function getTemplates(page: number = 1, limit: number = 20): Promise<PollTemplateResponse> {
+  const response = await apiClient.get<PollTemplateResponse>(`${POLLS_BASE}/templates`, {
+    params: { page, limit },
+  });
+  return response.data;
+}
+
+export async function duplicatePoll(id: string): Promise<Poll> {
+  const response = await apiClient.post<Poll>(`${POLLS_BASE}/${id}/duplicate`);
   return response.data;
 }
 

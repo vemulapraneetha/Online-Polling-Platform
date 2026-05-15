@@ -62,6 +62,23 @@ export interface PollListResponse {
   pages: number;
 }
 
+export interface PollTemplateItem {
+  _id: string;
+  title: string;
+  poll_type: PollType;
+  visibility: PollVisibility;
+  created_at: string;
+  options_count: number;
+}
+
+export interface PollTemplateResponse {
+  items: PollTemplateItem[];
+  total: number;
+  page: number;
+  limit: number;
+  has_next: boolean;
+}
+
 export interface FeedParams {
   poll_type?: string;
   sort_by?: string;

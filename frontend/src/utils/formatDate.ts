@@ -6,7 +6,9 @@
  * Format an ISO date string to a human-readable format.
  */
 export function formatDate(dateStr: string): string {
-  const date = new Date(dateStr);
+  // Ensure string is treated as UTC if backend stripped the timezone
+  const safeStr = dateStr.endsWith('Z') || dateStr.includes('+') ? dateStr : `${dateStr}Z`;
+  const date = new Date(safeStr);
   return date.toLocaleDateString('en-US', {
     year: 'numeric',
     month: 'short',
@@ -18,7 +20,8 @@ export function formatDate(dateStr: string): string {
  * Format an ISO date string to include time.
  */
 export function formatDateTime(dateStr: string): string {
-  const date = new Date(dateStr);
+  const safeStr = dateStr.endsWith('Z') || dateStr.includes('+') ? dateStr : `${dateStr}Z`;
+  const date = new Date(safeStr);
   return date.toLocaleDateString('en-US', {
     year: 'numeric',
     month: 'short',
@@ -32,7 +35,8 @@ export function formatDateTime(dateStr: string): string {
  * Get relative time string (e.g. "2 hours ago").
  */
 export function timeAgo(dateStr: string): string {
-  const date = new Date(dateStr);
+  const safeStr = dateStr.endsWith('Z') || dateStr.includes('+') ? dateStr : `${dateStr}Z`;
+  const date = new Date(safeStr);
   const now = new Date();
   const seconds = Math.floor((now.getTime() - date.getTime()) / 1000);
 
