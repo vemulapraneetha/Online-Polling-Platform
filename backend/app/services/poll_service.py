@@ -1,7 +1,8 @@
 """
-Poll service — business logic for poll CRUD operations.
+Poll service — business logic for poll CRUD, lifecycle, feed, and auto-close.
 """
 
+import logging
 import math
 from datetime import datetime, timezone
 from typing import Optional
@@ -17,6 +18,8 @@ from app.schemas.poll import (
     PollListResponse,
 )
 from app.utils.exceptions import not_found, forbidden, conflict
+
+logger = logging.getLogger(__name__)
 
 
 def _build_options(labels: list) -> list[dict]:
@@ -108,8 +111,7 @@ async def get_poll_by_id(poll_id: str, user_id: str) -> PollResponse:
     Access rules:
     - Creator can always see their own poll.
     - Public + open polls are visible to anyone.
-    - Private polls require an active invitation (checked here naively;
-      full invitation logic comes in Phase 2).
+    - Private polls require an active invitation.
     """
     db = get_database()
 
@@ -132,7 +134,7 @@ async def get_poll_by_id(poll_id: str, user_id: str) -> PollResponse:
         invitation = await db.invitations.find_one({
             "poll_id": oid,
             "invitee_id": ObjectId(user_id),
-            "status": "pending",
+            "status": "active",
         })
         if invitation is None:
             raise forbidden("You do not have access to this poll")
@@ -215,3 +217,184 @@ async def delete_poll(poll_id: str, user_id: str) -> None:
         raise conflict("Only polls in draft status can be deleted")
 
     await db.polls.delete_one({"_id": oid})
+
+
+# ── Lifecycle ────────────────────────────────────────────────────────────────
+
+
+async def publish_poll(poll_id: str, user_id: str) -> PollResponse:
+    """
+    Publish a poll: draft → open.
+
+    Sets published_at = now.
+    After publishing, title, options, poll_type, and visibility are immutable.
+
+    Errors:
+    - 403 if not creator.
+    - 409 if not in draft status.
+    """
+    db = get_database()
+
+    try:
+        oid = ObjectId(poll_id)
+    except Exception:
+        raise not_found("Poll")
+
+    doc = await db.polls.find_one({"_id": oid})
+    if doc is None:
+        raise not_found("Poll")
+
+    if str(doc["creator_id"]) != user_id:
+        raise forbidden("Only the poll creator can publish this poll")
+
+    if doc.get("status") != "draft":
+        raise conflict("Only polls in draft status can be published")
+
+    now = datetime.now(timezone.utc)
+    await db.polls.update_one(
+        {"_id": oid},
+        {
+            "$set": {
+                "status": "open",
+                "published_at": now,
+                "updated_at": now,
+            }
+        },
+    )
+
+    updated = await db.polls.find_one({"_id": oid})
+    return _serialize_poll(updated)
+
+
+async def close_poll(poll_id: str, user_id: str) -> PollResponse:
+    """
+    Close a poll: open → closed.
+
+    Sets closed_at = now.
+
+    Errors:
+    - 403 if not creator.
+    - 409 if not in open status.
+    """
+    db = get_database()
+
+    try:
+        oid = ObjectId(poll_id)
+    except Exception:
+        raise not_found("Poll")
+
+    doc = await db.polls.find_one({"_id": oid})
+    if doc is None:
+        raise not_found("Poll")
+
+    if str(doc["creator_id"]) != user_id:
+        raise forbidden("Only the poll creator can close this poll")
+
+    if doc.get("status") != "open":
+        raise conflict("Only polls in open status can be closed")
+
+    now = datetime.now(timezone.utc)
+    await db.polls.update_one(
+        {"_id": oid},
+        {
+            "$set": {
+                "status": "closed",
+                "closed_at": now,
+                "updated_at": now,
+            }
+        },
+    )
+
+    updated = await db.polls.find_one({"_id": oid})
+    return _serialize_poll(updated)
+
+
+# ── Auto-close (called by APScheduler) ──────────────────────────────────────
+
+
+async def auto_close_expired_polls() -> None:
+    """
+    Query for polls where status="open" and expires_at <= now.
+    Set status="closed" and closed_at=now for each.
+
+    Called by APScheduler every 60 seconds.
+    """
+    db = get_database()
+    now = datetime.now(timezone.utc)
+
+    query = {
+        "status": "open",
+        "expires_at": {"$lte": now, "$ne": None},
+    }
+
+    result = await db.polls.update_many(
+        query,
+        {
+            "$set": {
+                "status": "closed",
+                "closed_at": now,
+                "updated_at": now,
+            }
+        },
+    )
+
+    if result.modified_count > 0:
+        logger.info(f"Auto-closed {result.modified_count} expired poll(s)")
+    else:
+        logger.debug("Auto-close check: no expired polls found")
+
+
+# ── Public Feed ──────────────────────────────────────────────────────────────
+
+
+async def get_public_feed(
+    poll_type: str = "all",
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
+    page: int = 1,
+    limit: int = 20,
+) -> dict:
+    """
+    Public feed of open polls.
+
+    Filters: poll_type (single_choice, multi_choice, all).
+    Sort: created_at or expires_at.
+    Order: asc or desc.
+    """
+    db = get_database()
+
+    query: dict = {
+        "status": "open",
+        "visibility": "public",
+    }
+
+    if poll_type != "all":
+        query["poll_type"] = poll_type
+
+    # Validate sort field
+    if sort_by not in ("created_at", "expires_at"):
+        sort_by = "created_at"
+
+    sort_direction = -1 if sort_order == "desc" else 1
+
+    total = await db.polls.count_documents(query)
+    skip = (page - 1) * limit
+
+    cursor = (
+        db.polls.find(query)
+        .sort(sort_by, sort_direction)
+        .skip(skip)
+        .limit(limit)
+    )
+    docs = await cursor.to_list(length=limit)
+
+    items = [_serialize_poll(doc).model_dump(by_alias=True) for doc in docs]
+    has_next = (page * limit) < total
+
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "has_next": has_next,
+    }

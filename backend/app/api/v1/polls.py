@@ -1,12 +1,15 @@
 """
-Poll CRUD API endpoints.
+Poll CRUD + Lifecycle API endpoints.
 
 Routes:
 - POST   /             — create a new poll (draft)
 - GET    /my           — list current user's polls (paginated)
+- GET    /feed         — public poll feed (paginated, filterable)
 - GET    /{poll_id}    — get a single poll
 - PATCH  /{poll_id}    — update a draft poll
 - DELETE /{poll_id}    — delete a draft poll
+- POST   /{poll_id}/publish — publish a draft poll (draft → open)
+- POST   /{poll_id}/close   — close an open poll (open → closed)
 """
 
 from typing import Optional
@@ -26,6 +29,9 @@ from app.services.poll_service import (
     get_my_polls,
     get_poll_by_id,
     update_poll,
+    publish_poll,
+    close_poll,
+    get_public_feed,
 )
 
 router = APIRouter(prefix="/polls", tags=["Polls"])
@@ -70,6 +76,32 @@ async def list_my_polls(
 
 
 @router.get(
+    "/feed",
+    response_model=dict,
+    summary="Public poll feed",
+    description=(
+        "Paginated list of public, open polls. "
+        "Supports filtering by poll_type and sorting."
+    ),
+)
+async def public_feed(
+    current_user: dict = Depends(get_current_user),
+    poll_type: str = Query("all", description="Filter: single_choice, multi_choice, all."),
+    sort_by: str = Query("created_at", description="Sort field: created_at or expires_at."),
+    sort_order: str = Query("desc", description="Sort order: asc or desc."),
+    page: int = Query(1, ge=1, description="Page number."),
+    limit: int = Query(20, ge=1, le=50, description="Items per page (max 50)."),
+) -> dict:
+    return await get_public_feed(
+        poll_type=poll_type,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        page=page,
+        limit=limit,
+    )
+
+
+@router.get(
     "/{poll_id}",
     response_model=PollResponse,
     summary="Get a poll",
@@ -107,3 +139,32 @@ async def delete(
     current_user: dict = Depends(get_current_user),
 ) -> None:
     await delete_poll(poll_id, user_id=current_user["_id"])
+
+
+@router.post(
+    "/{poll_id}/publish",
+    response_model=PollResponse,
+    summary="Publish a poll",
+    description=(
+        "Transition a poll from draft → open. "
+        "After publishing, title, options, poll_type, and visibility become immutable."
+    ),
+)
+async def publish(
+    poll_id: str,
+    current_user: dict = Depends(get_current_user),
+) -> PollResponse:
+    return await publish_poll(poll_id, user_id=current_user["_id"])
+
+
+@router.post(
+    "/{poll_id}/close",
+    response_model=PollResponse,
+    summary="Close a poll",
+    description="Transition a poll from open → closed. Creator only.",
+)
+async def close(
+    poll_id: str,
+    current_user: dict = Depends(get_current_user),
+) -> PollResponse:
+    return await close_poll(poll_id, user_id=current_user["_id"])

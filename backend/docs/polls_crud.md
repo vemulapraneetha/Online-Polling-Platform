@@ -246,6 +246,112 @@ All fields are optional — only provided fields are updated:
 
 ---
 
+### 6. Publish Poll (`POST /api/v1/polls/{poll_id}/publish`)
+
+**Auth:** Required (creator only)
+
+#### Behaviour
+
+- Transitions poll from `draft` → `open`.
+- Sets `published_at` to current UTC time.
+- Sets `updated_at` to current UTC time.
+- After publishing, the following fields become **immutable**:
+  - `title`
+  - `options`
+  - `poll_type`
+  - `visibility`
+
+#### Error Responses
+
+| Status | Condition           | Detail                                         |
+| ------ | ------------------- | ---------------------------------------------- |
+| 404    | Poll not found      | "Poll not found"                               |
+| 403    | Not the creator     | "Only the poll creator can publish this poll"   |
+| 409    | Not in draft status | "Only polls in draft status can be published"   |
+
+---
+
+### 7. Close Poll (`POST /api/v1/polls/{poll_id}/close`)
+
+**Auth:** Required (creator only)
+
+#### Behaviour
+
+- Transitions poll from `open` → `closed`.
+- Sets `closed_at` to current UTC time.
+- Sets `updated_at` to current UTC time.
+- No more votes can be submitted or withdrawn after closing.
+
+#### Error Responses
+
+| Status | Condition          | Detail                                       |
+| ------ | ------------------ | -------------------------------------------- |
+| 404    | Poll not found     | "Poll not found"                             |
+| 403    | Not the creator    | "Only the poll creator can close this poll"   |
+| 409    | Not in open status | "Only polls in open status can be closed"     |
+
+---
+
+### 8. Auto-Close Expired Polls (APScheduler Job)
+
+A background job runs every **60 seconds** and automatically closes polls that have expired.
+
+#### Query Criteria
+
+```javascript
+{
+  status: "open",
+  expires_at: { $lte: now, $ne: null }
+}
+```
+
+#### Update Applied
+
+```javascript
+{
+  $set: {
+    status: "closed",
+    closed_at: now,
+    updated_at: now
+  }
+}
+```
+
+- Logs the count of auto-closed polls each run.
+- Uses `update_many` for efficient batch processing.
+
+---
+
+### 9. Public Feed (`GET /api/v1/polls/feed`)
+
+**Auth:** Required
+
+Returns a paginated list of public, open polls.
+
+#### Query Parameters
+
+| Param        | Type   | Default      | Description                                    |
+| ------------ | ------ | ------------ | ---------------------------------------------- |
+| `poll_type`  | string | `all`        | Filter: `single_choice`, `multi_choice`, `all` |
+| `sort_by`    | string | `created_at` | Sort field: `created_at` or `expires_at`       |
+| `sort_order` | string | `desc`       | Sort direction: `asc` or `desc`                |
+| `page`       | int    | 1            | Page number (≥ 1)                              |
+| `limit`      | int    | 20           | Items per page (1-50)                          |
+
+#### Response (`200 OK`)
+
+```json
+{
+  "items": [ /* PollResponse objects */ ],
+  "total": 42,
+  "page": 1,
+  "limit": 20,
+  "has_next": true
+}
+```
+
+---
+
 ## Database Indexes
 
 | Fields                    | Type     | Purpose                            |
