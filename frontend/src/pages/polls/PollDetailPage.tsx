@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import toast from 'react-hot-toast';
 import { usePoll } from '../../hooks/usePolls';
 import { useMyVote, useSubmitVote, useWithdrawVote } from '../../hooks/useVote';
 import { useResults } from '../../hooks/useResults';
@@ -58,13 +59,29 @@ export function PollDetailPage() {
     }
   }
 
+  function handleCopyLink() {
+    navigator.clipboard.writeText(window.location.href);
+    toast.success('Link copied to clipboard!');
+  }
+
   return (
     <div className="max-w-3xl mx-auto space-y-6 animate-fade-in">
-      {/* Back button */}
-      <button onClick={() => navigate(-1)} className="flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700 transition-colors">
-        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
-        Back
-      </button>
+      {/* Top actions */}
+      <div className="flex items-center justify-between">
+        <button onClick={() => navigate(-1)} className="flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700 transition-colors">
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
+          Back
+        </button>
+
+        {poll.visibility === 'public' && (
+          <Button size="sm" variant="secondary" onClick={handleCopyLink}>
+            <svg className="w-4 h-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+            </svg>
+            Copy Link
+          </Button>
+        )}
+      </div>
 
       {/* Poll header card */}
       <div className="bg-white rounded-2xl border border-slate-100 p-6 sm:p-8">
