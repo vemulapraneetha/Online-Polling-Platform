@@ -16,9 +16,9 @@ from app.api.v1.results import router as results_router
 router = APIRouter(prefix="/api/v1")
 
 router.include_router(auth_router)
-router.include_router(polls_router)
-# Invitations must come before votes/results so /shared doesn't
-# conflict with /{poll_id} routes
+# Invitations must come before polls so /shared doesn't
+# conflict with /{poll_id} routes in polls_router
 router.include_router(invitations_router)
+router.include_router(polls_router)
 router.include_router(votes_router)
 router.include_router(results_router)

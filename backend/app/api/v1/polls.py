@@ -32,6 +32,8 @@ from app.services.poll_service import (
     publish_poll,
     close_poll,
     get_public_feed,
+    get_templates,
+    duplicate_poll,
 )
 
 router = APIRouter(prefix="/polls", tags=["Polls"])
@@ -77,7 +79,7 @@ async def list_my_polls(
 
 @router.get(
     "/feed",
-    response_model=dict,
+    response_model=PollListResponse,
     summary="Public poll feed",
     description=(
         "Paginated list of public, open polls. "
@@ -91,11 +93,29 @@ async def public_feed(
     sort_order: str = Query("desc", description="Sort order: asc or desc."),
     page: int = Query(1, ge=1, description="Page number."),
     limit: int = Query(20, ge=1, le=50, description="Items per page (max 50)."),
-) -> dict:
+) -> PollListResponse:
     return await get_public_feed(
         poll_type=poll_type,
         sort_by=sort_by,
         sort_order=sort_order,
+        page=page,
+        limit=limit,
+    )
+
+
+@router.get(
+    "/templates",
+    response_model=dict,
+    summary="List poll templates",
+    description="Get current user's previous open/closed polls to use as templates.",
+)
+async def templates(
+    current_user: dict = Depends(get_current_user),
+    page: int = Query(1, ge=1, description="Page number."),
+    limit: int = Query(20, ge=1, le=100, description="Items per page."),
+) -> dict:
+    return await get_templates(
+        user_id=current_user["_id"],
         page=page,
         limit=limit,
     )
@@ -168,3 +188,17 @@ async def close(
     current_user: dict = Depends(get_current_user),
 ) -> PollResponse:
     return await close_poll(poll_id, user_id=current_user["_id"])
+
+
+@router.post(
+    "/{poll_id}/duplicate",
+    response_model=PollResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Duplicate a poll",
+    description="Create a new draft poll using an existing poll as a template. Creator only.",
+)
+async def duplicate(
+    poll_id: str,
+    current_user: dict = Depends(get_current_user),
+) -> PollResponse:
+    return await duplicate_poll(poll_id, user_id=current_user["_id"])

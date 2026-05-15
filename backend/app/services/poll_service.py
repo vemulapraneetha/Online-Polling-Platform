@@ -7,6 +7,7 @@ import math
 from datetime import datetime, timezone
 from typing import Optional
 
+# pyrefly: ignore [missing-import]
 from bson import ObjectId
 
 from app.db.client import get_database
@@ -102,6 +103,95 @@ async def get_my_polls(
         limit=limit,
         pages=pages,
     )
+
+
+async def get_templates(
+    user_id: str,
+    page: int = 1,
+    limit: int = 20,
+) -> dict:
+    """
+    Get current user's previous polls (open or closed) to use as templates.
+    """
+    db = get_database()
+
+    query = {
+        "creator_id": ObjectId(user_id),
+        "status": {"$in": ["open", "closed"]},
+    }
+
+    total = await db.polls.count_documents(query)
+    skip = (page - 1) * limit
+
+    cursor = db.polls.find(query).sort("created_at", -1).skip(skip).limit(limit)
+    docs = await cursor.to_list(length=limit)
+
+    items = []
+    for doc in docs:
+        items.append({
+            "_id": str(doc["_id"]),
+            "title": doc["title"],
+            "poll_type": doc.get("poll_type", "single_choice"),
+            "visibility": doc.get("visibility", "public"),
+            "created_at": doc.get("created_at"),
+            "options_count": len(doc.get("options", [])),
+        })
+
+    has_next = (page * limit) < total
+
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "has_next": has_next,
+    }
+
+
+async def duplicate_poll(poll_id: str, user_id: str) -> PollResponse:
+    """
+    Duplicate an existing poll to create a new draft poll.
+    Only the creator can duplicate their own poll.
+    """
+    db = get_database()
+
+    try:
+        oid = ObjectId(poll_id)
+    except Exception:
+        raise not_found("Poll")
+
+    doc = await db.polls.find_one({"_id": oid})
+    if doc is None:
+        raise not_found("Poll")
+
+    if str(doc["creator_id"]) != user_id:
+        raise forbidden("Only the poll creator can duplicate this poll")
+
+    now = datetime.now(timezone.utc)
+    new_title = doc.get("title", "")
+    if not new_title.startswith("Copy of "):
+        new_title = f"Copy of {new_title}"
+
+    poll_doc = {
+        "creator_id": ObjectId(user_id),
+        "title": new_title,
+        "description": doc.get("description"),
+        "poll_type": doc.get("poll_type"),
+        "status": "draft",
+        "visibility": doc.get("visibility"),
+        "options": doc.get("options", []),
+        "results_visibility": doc.get("results_visibility"),
+        "expires_at": doc.get("expires_at"),
+        "created_at": now,
+        "updated_at": now,
+        "published_at": None,
+        "closed_at": None,
+    }
+
+    result = await db.polls.insert_one(poll_doc)
+    poll_doc["_id"] = result.inserted_id
+
+    return _serialize_poll(poll_doc)
 
 
 async def get_poll_by_id(poll_id: str, user_id: str) -> PollResponse:
@@ -353,7 +443,7 @@ async def get_public_feed(
     sort_order: str = "desc",
     page: int = 1,
     limit: int = 20,
-) -> dict:
+) -> PollListResponse:
     """
     Public feed of open polls.
 
@@ -388,13 +478,13 @@ async def get_public_feed(
     )
     docs = await cursor.to_list(length=limit)
 
-    items = [_serialize_poll(doc).model_dump(by_alias=True) for doc in docs]
-    has_next = (page * limit) < total
+    polls = [_serialize_poll(doc) for doc in docs]
+    pages = max(1, math.ceil(total / limit))
 
-    return {
-        "items": items,
-        "total": total,
-        "page": page,
-        "limit": limit,
-        "has_next": has_next,
-    }
+    return PollListResponse(
+        polls=polls,
+        total=total,
+        page=page,
+        limit=limit,
+        pages=pages,
+    )
